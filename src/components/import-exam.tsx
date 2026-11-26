@@ -1,19 +1,17 @@
 import { useRef, useState } from "react";
-import { Check, FileUp, LoaderCircle, Sparkles, Trash2 } from "lucide-react";
+import { Check, FileUp, LoaderCircle, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { AnswerKey, ExamQuestion } from "@/data/ctfl-sample-a";
-import {
-  extractFileText,
-  parseExamContent,
-  parseExamWithGemini,
-  type ImportedExam,
-} from "@/lib/exam-import";
+import { extractFileText, parseExamWithGemini, type ImportedExam } from "@/lib/exam-import";
 
 // Dán khóa của bạn vào đây. Khóa này sẽ xuất hiện trong bundle frontend sau khi build.
 const EMBEDDED_TRANSLATION_KEY = "AQ.Ab8RN6JtkwGFVV42O0OlUamj02FrMFWOM-h1dmCbYS7Aq_b_lQ";
+const isAnswerFile = (selectedFile: File) => /(?:answer|đáp[ -]?án)/i.test(selectedFile.name);
+const isQuestionFile = (selectedFile: File) =>
+  /(?:question|câu[ -]?hỏi|đề[ -]?thi)/i.test(selectedFile.name);
 
 export function ImportExam({
   onImport,
@@ -28,7 +26,6 @@ export function ImportExam({
   const [preview, setPreview] = useState<ImportedExam | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [useAi, setUseAi] = useState(false);
   const apiKey = EMBEDDED_TRANSLATION_KEY.trim();
   const [aiWarnings, setAiWarnings] = useState<string[]>([]);
 
@@ -52,34 +49,17 @@ export function ImportExam({
     try {
       const questionText = await extractFileText(file);
       const answerText = answerFile ? await extractFileText(answerFile) : "";
-      const text = answerText ? `${questionText}\nAnswer Key\n${answerText}` : questionText;
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-      const fingerprint = [...new Uint8Array(digest)]
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
-      if (useAi) {
-        if (!apiKey || apiKey === "DAN_GEMINI_API_KEY_VAO_DAY") {
-          throw new Error("Chưa cấu hình khóa dịch thuật trong source.");
-        }
-        setStatus("Đang upload…");
-        const parsed = await parseExamWithGemini({
-          questionText,
-          answerText,
-          sourceName: file.name,
-          apiKey,
-        });
-        setAiWarnings(parsed.warnings);
-        setPreview(parsed);
-      } else {
-        const parsed = parseExamContent(text, file.name);
-        setAiWarnings([]);
-        setPreview({
-          ...parsed,
-          id: `import-${fingerprint}`,
-          createdAt: new Date().toISOString(),
-          sourceName: file.name,
-        });
+      if (!apiKey || apiKey === "DAN_GEMINI_API_KEY_VAO_DAY") {
+        throw new Error("Chưa cấu hình khóa dịch thuật trong source.");
       }
+      const parsed = await parseExamWithGemini({
+        questionText,
+        answerText,
+        sourceName: file.name,
+        apiKey,
+      });
+      setAiWarnings(parsed.warnings);
+      setPreview(parsed);
       setStatus("Hoàn tất kiểm tra dữ liệu — hãy xác nhận preview trước khi lưu");
     } catch (reason) {
       setPreview(null);
@@ -133,7 +113,15 @@ export function ImportExam({
           type="file"
           accept=".pdf,.doc,.docx,.txt,.json,.xlsx,.csv"
           onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
+            const selectedFile = event.target.files?.[0] ?? null;
+            if (selectedFile && isAnswerFile(selectedFile)) {
+              setAnswerFile(selectedFile);
+              setFile(null);
+              setStatus("Đã nhận file đáp án — hãy chọn thêm file câu hỏi");
+            } else {
+              setFile(selectedFile);
+              setStatus("");
+            }
             setPreview(null);
             setError("");
           }}
@@ -164,25 +152,20 @@ export function ImportExam({
           type="file"
           accept=".pdf,.doc,.docx,.txt,.json,.xlsx,.csv"
           onChange={(event) => {
-            setAnswerFile(event.target.files?.[0] ?? null);
+            const selectedFile = event.target.files?.[0] ?? null;
+            if (selectedFile && isQuestionFile(selectedFile)) {
+              setFile(selectedFile);
+              setAnswerFile(null);
+              setStatus("");
+            } else {
+              setAnswerFile(selectedFile);
+              setStatus("");
+            }
             setPreview(null);
             setError("");
           }}
         />
-      </label>
-      <label className="import-field import-ai-toggle">
-        <span>
-          <input
-            type="checkbox"
-            checked={useAi}
-            onChange={(event) => {
-              setUseAi(event.target.checked);
-              setPreview(null);
-              setStatus("");
-            }}
-          />
-          <Sparkles aria-hidden="true" /> Dịch tiếng Việt và tạo dữ liệu chuẩn Set A
-        </span>
+        {answerFile && <small>Đã chọn: {answerFile.name}</small>}
       </label>
       {status && (
         <p className="import-status">
@@ -279,9 +262,8 @@ export function ImportExam({
             </label>
           </div>
           <p className="import-notice">
-            {useAi
-              ? "Dữ liệu đã được dịch và chuẩn hóa một lần. Hãy kiểm tra câu hỏi, lựa chọn và đáp án trong preview; sau khi lưu, ứng dụng chỉ dùng dữ liệu local và không cần file PDF nữa."
-              : "Nội dung được đọc và phân tích hoàn toàn trên thiết bị này; chế độ này không tự dịch."}
+            Dữ liệu đã được dịch và chuẩn hóa một lần. Hãy kiểm tra câu hỏi, lựa chọn và đáp án
+            trong preview; sau khi lưu, ứng dụng chỉ dùng dữ liệu local và không cần file PDF nữa.
           </p>
           <div className="preview-questions">
             {preview.questions.map((question, index) => (
