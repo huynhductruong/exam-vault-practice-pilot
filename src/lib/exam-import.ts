@@ -230,7 +230,7 @@ export async function parseExamWithGemini({
   answerText,
   sourceName,
   apiKey,
-  model = "gemini-2.5-pro",
+  model = "gemini-flash-lite-latest",
 }: {
   questionText: string;
   answerText?: string;
