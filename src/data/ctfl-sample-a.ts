@@ -6,7 +6,10 @@ export type ExamQuestion = {
   k: string;
   ans: AnswerKey[];
   stem: string;
-  opt: Record<AnswerKey, string>;
+  opt: Partial<Record<AnswerKey, string>>;
+  sourceSet?: string;
+  sourceNumber?: number;
+  sourcePage?: number;
   ex: Partial<Record<AnswerKey, string>>;
   pre?: string;
   img?: "std";
