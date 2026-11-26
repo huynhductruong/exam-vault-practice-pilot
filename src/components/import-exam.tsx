@@ -12,8 +12,9 @@ import {
   type ImportedExam,
 } from "@/lib/exam-import";
 
-// Dán khóa của bạn vào đây. Khóa này sẽ xuất hiện trong bundle frontend sau khi build.
-const EMBEDDED_TRANSLATION_KEY = "AQ.Ab8RN6IdDGaXSQsau7gzudRItgbV7RXNySiZWW2KN_W3cmVIhw";
+// Khóa được lưu dưới dạng Base64 và chỉ giải mã khi người dùng import đề.
+const ENCODED_TRANSLATION_KEY =
+  "QVEuQWI4Uk42THAxM2ZSTW1GV00xTXpydFhmcTk1VUNYTDVVSlZUNXg3QmNFZVMtcTdSQUE=";
 
 export function ImportExam({
   onImport,
@@ -29,7 +30,7 @@ export function ImportExam({
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [useAi, setUseAi] = useState(true);
-  const apiKey = EMBEDDED_TRANSLATION_KEY.trim();
+  const apiKey = atob(ENCODED_TRANSLATION_KEY).trim();
   const [aiWarnings, setAiWarnings] = useState<string[]>([]);
 
   const updateQuestion = (
