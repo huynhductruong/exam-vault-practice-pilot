@@ -13,7 +13,7 @@ import {
 } from "@/lib/exam-import";
 
 // Dán khóa của bạn vào đây. Khóa này sẽ xuất hiện trong bundle frontend sau khi build.
-const EMBEDDED_TRANSLATION_KEY = "DAN_GEMINI_API_KEY_VAO_DAY";
+const EMBEDDED_TRANSLATION_KEY = "AQ.Ab8RN6JtkwGFVV42O0OlUamj02FrMFWOM-h1dmCbYS7Aq_b_lQ";
 
 export function ImportExam({
   onImport,
