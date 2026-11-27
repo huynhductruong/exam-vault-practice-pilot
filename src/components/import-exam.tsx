@@ -1,7 +1,17 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { Check, FileUp, LoaderCircle, Sparkles, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { AnswerKey, ExamQuestion } from "@/data/ctfl-sample-a";
@@ -16,6 +26,63 @@ import {
 const ENCODED_TRANSLATION_KEY =
   "QVEuQWI4Uk42THAxM2ZSTW1GV00xTXpydFhmcTk1VUNYTDVVSlZUNXg3QmNFZVMtcTdSQUE=";
 
+type ImportSessionState = {
+  file: File | null;
+  answerFile: File | null;
+  preview: ImportedExam | null;
+  status: string;
+  error: string;
+  useAi: boolean;
+  aiWarnings: string[];
+};
+
+let importSession: ImportSessionState = {
+  file: null,
+  answerFile: null,
+  preview: null,
+  status: "",
+  error: "",
+  useAi: true,
+  aiWarnings: [],
+};
+let activeImportController: AbortController | null = null;
+const importSessionListeners = new Set<() => void>();
+
+function updateImportSession(update: Partial<ImportSessionState>) {
+  importSession = { ...importSession, ...update };
+  importSessionListeners.forEach((listener) => listener());
+}
+
+function subscribeImportSession(listener: () => void) {
+  importSessionListeners.add(listener);
+  return () => importSessionListeners.delete(listener);
+}
+
+function useImportSession() {
+  return useSyncExternalStore(
+    subscribeImportSession,
+    () => importSession,
+    () => importSession,
+  );
+}
+
+function PreviewText({ value }: { value: string }) {
+  return value.split(/<br\s*\/?>/gi).map((part, index) => (
+    <span key={`${index}-${part.slice(0, 12)}`}>
+      {index > 0 && <br />}
+      {part}
+    </span>
+  ));
+}
+
+function toEditableText(value: string) {
+  return value.replace(/<br\s*\/?>/gi, "\n");
+}
+
+function fromEditableText(value: string) {
+  return value.replace(/\r?\n/g, "<br>");
+}
+
 export function ImportExam({
   onImport,
   existingQuestions,
@@ -24,14 +91,17 @@ export function ImportExam({
   existingQuestions: ExamQuestion[];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [answerFile, setAnswerFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<ImportedExam | null>(null);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [useAi, setUseAi] = useState(true);
+  const answerInputRef = useRef<HTMLInputElement>(null);
+  const [duplicateConfirmation, setDuplicateConfirmation] = useState(0);
+  const { file, answerFile, preview, status, error, useAi, aiWarnings } = useImportSession();
   const apiKey = atob(ENCODED_TRANSLATION_KEY).trim();
-  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
+  const setFile = (value: File | null) => updateImportSession({ file: value });
+  const setAnswerFile = (value: File | null) => updateImportSession({ answerFile: value });
+  const setPreview = (value: ImportedExam | null) => updateImportSession({ preview: value });
+  const setStatus = (value: string) => updateImportSession({ status: value });
+  const setError = (value: string) => updateImportSession({ error: value });
+  const setUseAi = (value: boolean) => updateImportSession({ useAi: value });
+  const setAiWarnings = (value: string[]) => updateImportSession({ aiWarnings: value });
 
   const updateQuestion = (
     questionIndex: number,
@@ -48,11 +118,28 @@ export function ImportExam({
 
   const analyze = async () => {
     if (!file) return;
+    activeImportController?.abort();
+    const controller = new AbortController();
+    activeImportController = controller;
     setError("");
-    setStatus("Đang upload…");
+    setPreview(null);
+    setStatus("Đang đọc nội dung file…");
     try {
+      if (
+        answerFile &&
+        answerFile.name === file.name &&
+        answerFile.size === file.size &&
+        answerFile.lastModified === file.lastModified
+      ) {
+        throw new Error(
+          "File đáp án đang trùng với file đề. Hãy chọn đúng file có tên Answers hoặc để trống nếu đáp án nằm chung trong file đề.",
+        );
+      }
       const questionText = await extractFileText(file);
+      controller.signal.throwIfAborted();
+      setStatus("Đang đọc file đáp án…");
       const answerText = answerFile ? await extractFileText(answerFile) : "";
+      controller.signal.throwIfAborted();
       const text = answerText ? `${questionText}\nAnswer Key\n${answerText}` : questionText;
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
       const fingerprint = [...new Uint8Array(digest)]
@@ -62,12 +149,14 @@ export function ImportExam({
         if (!apiKey || apiKey === "DAN_GEMINI_API_KEY_VAO_DAY") {
           throw new Error("Chưa cấu hình khóa dịch thuật trong source.");
         }
-        setStatus("Đang upload…");
+        setStatus("Đang nhận diện câu hỏi và đáp án…");
         const parsed = await parseExamWithGemini({
           questionText,
           answerText,
           sourceName: file.name,
           apiKey,
+          signal: controller.signal,
+          onProgress: (progress) => setStatus(progress.message),
         });
         setAiWarnings(parsed.warnings);
         setPreview(parsed);
@@ -83,9 +172,14 @@ export function ImportExam({
       }
       setStatus("Hoàn tất kiểm tra dữ liệu — hãy xác nhận preview trước khi lưu");
     } catch (reason) {
+      controller.abort();
       setPreview(null);
-      setError(reason instanceof Error ? reason.message : "Không thể import file.");
+      if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+        setError(reason instanceof Error ? reason.message : "Không thể import file.");
+      }
       setStatus("");
+    } finally {
+      if (activeImportController === controller) activeImportController = null;
     }
   };
 
@@ -108,11 +202,10 @@ export function ImportExam({
     const duplicates = preview.questions.filter((question) =>
       existing.has(question.stem.toLowerCase().replace(/<[^>]*>|\W/g, "")),
     ).length;
-    if (
-      duplicates > 0 &&
-      !window.confirm(`Phát hiện ${duplicates} câu trùng với ngân hàng hiện tại. Vẫn lưu bộ đề?`)
-    )
+    if (duplicates > 0) {
+      setDuplicateConfirmation(duplicates);
       return;
+    }
     onImport(preview);
   };
 
@@ -134,7 +227,10 @@ export function ImportExam({
           type="file"
           accept=".pdf,.doc,.docx,.txt,.json,.xlsx,.csv"
           onChange={(event) => {
+            activeImportController?.abort();
             setFile(event.target.files?.[0] ?? null);
+            setAnswerFile(null);
+            if (answerInputRef.current) answerInputRef.current.value = "";
             setPreview(null);
             setError("");
           }}
@@ -149,7 +245,10 @@ export function ImportExam({
           <Button
             variant="outline"
             onClick={() => {
+              activeImportController?.abort();
               setFile(null);
+              setAnswerFile(null);
+              if (answerInputRef.current) answerInputRef.current.value = "";
               setPreview(null);
               setStatus("");
               setError("");
@@ -161,15 +260,38 @@ export function ImportExam({
       </div>
       <label className="import-field">
         File đáp án bổ sung (nếu tách riêng)
-        <Input
-          type="file"
-          accept=".pdf,.doc,.docx,.txt,.json,.xlsx,.csv"
-          onChange={(event) => {
-            setAnswerFile(event.target.files?.[0] ?? null);
-            setPreview(null);
-            setError("");
-          }}
-        />
+        <span className="answer-file-row">
+          <Input
+            ref={answerInputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.txt,.json,.xlsx,.csv"
+            onChange={(event) => {
+              activeImportController?.abort();
+              setAnswerFile(event.target.files?.[0] ?? null);
+              setPreview(null);
+              setError("");
+            }}
+          />
+          {answerFile && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Xóa file đáp án"
+              title="Xóa file đáp án"
+              onClick={() => {
+                activeImportController?.abort();
+                setAnswerFile(null);
+                setPreview(null);
+                setStatus("");
+                setError("");
+                if (answerInputRef.current) answerInputRef.current.value = "";
+              }}
+            >
+              <Trash2 />
+            </Button>
+          )}
+        </span>
       </label>
       <label className="import-field import-ai-toggle">
         <span>
@@ -205,7 +327,12 @@ export function ImportExam({
               <p className="eyebrow">PREVIEW</p>
               <h2>{preview.title}</h2>
             </div>
-            <span>{preview.questions.length} câu</span>
+            <div className="import-preview-actions">
+              <span>{preview.questions.length} câu</span>
+              <Button onClick={publish}>
+                <Check /> Lưu vào ngân hàng đề
+              </Button>
+            </div>
           </div>
           <div className="progress-grid">
             <div>
@@ -288,14 +415,17 @@ export function ImportExam({
             {preview.questions.map((question, index) => (
               <details key={`${question.n}-${index}`}>
                 <summary>
-                  <strong>Câu {index + 1}.</strong> {question.stem}
+                  <strong>Câu {index + 1}.</strong> <PreviewText value={question.stem} />
                 </summary>
                 <label className="import-field">
                   Nội dung câu hỏi
                   <Textarea
-                    value={question.stem}
+                    value={toEditableText(question.stem)}
                     onChange={(event) =>
-                      updateQuestion(index, (current) => ({ ...current, stem: event.target.value }))
+                      updateQuestion(index, (current) => ({
+                        ...current,
+                        stem: fromEditableText(event.target.value),
+                      }))
                     }
                   />
                 </label>
@@ -332,12 +462,15 @@ export function ImportExam({
                 <label className="import-field">
                   Lời giải
                   <Textarea
-                    value={question.ex[question.ans[0] ?? "a"] ?? ""}
+                    value={toEditableText(question.ex[question.ans[0] ?? "a"] ?? "")}
                     onChange={(event) =>
                       updateQuestion(index, (current) => ({
                         ...current,
                         ex: Object.fromEntries(
-                          current.ans.map((answer) => [answer, event.target.value]),
+                          current.ans.map((answer) => [
+                            answer,
+                            fromEditableText(event.target.value),
+                          ]),
                         ),
                       }))
                     }
@@ -358,11 +491,35 @@ export function ImportExam({
               </details>
             ))}
           </div>
-          <Button onClick={publish}>
-            <Check /> Lưu vào ngân hàng đề
-          </Button>
         </div>
       )}
+      <AlertDialog
+        open={duplicateConfirmation > 0}
+        onOpenChange={(open) => {
+          if (!open) setDuplicateConfirmation(0);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Phát hiện câu hỏi trùng</AlertDialogTitle>
+            <AlertDialogDescription>
+              Có {duplicateConfirmation} câu trùng với ngân hàng đề hiện tại. Bạn vẫn muốn lưu toàn
+              bộ đề này?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Quay lại kiểm tra</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setDuplicateConfirmation(0);
+                if (preview) onImport(preview);
+              }}
+            >
+              Vẫn lưu bộ đề
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

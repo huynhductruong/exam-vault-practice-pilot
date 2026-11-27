@@ -159,9 +159,13 @@ function Index() {
   }, [now, session]);
 
   const startQuiz = (mode: QuizMode, sourceSet?: string, durationOverride?: number | null) => {
-    const pool = sourceSet
-      ? officialImportedQuestions.filter((question) => question.sourceSet === sourceSet)
-      : [...allQuestions, ...importedExams.flatMap((exam) => exam.questions)];
+    const pool =
+      sourceSet === "A"
+        ? sampleAQuestions
+        : sourceSet
+          ? officialImportedQuestions.filter((question) => question.sourceSet === sourceSet)
+          : [...allQuestions, ...importedExams.flatMap((exam) => exam.questions)];
+    if (pool.length === 0) return;
     const questionCount = OFFICIAL_SET_SIZE;
     const minutes =
       durationOverride !== undefined ? durationOverride : mode === "practice" ? null : 60;
@@ -172,7 +176,9 @@ function Index() {
       id: crypto.randomUUID(),
       startedAt: Date.now(),
       mode,
-      questions: createRandomSet(pool, questionCount),
+      questions: sourceSet
+        ? [...pool].sort((first, second) => first.n - second.n)
+        : createRandomSet(pool, questionCount),
       answers: {},
       flagged: [],
       checked: [],
@@ -196,6 +202,7 @@ function Index() {
     minutes: number | null,
     passingPercentage = 65,
     title?: string,
+    randomize = true,
   ) => {
     if (questions.length === 0) return;
     const startedAt = Date.now();
@@ -205,7 +212,9 @@ function Index() {
       id: crypto.randomUUID(),
       startedAt,
       mode,
-      questions: createRandomSet(questions, questions.length),
+      questions: randomize
+        ? createRandomSet(questions, questions.length)
+        : [...questions].sort((first, second) => first.n - second.n),
       answers: {},
       flagged: [],
       checked: [],
@@ -221,7 +230,6 @@ function Index() {
 
   const saveImportedExam = (exam: ImportedExam) => {
     const duplicate = importedExams.some((item) => item.id === exam.id);
-    if (duplicate && !window.confirm("Tài liệu này đã được import. Tạo một phiên bản mới?")) return;
     const versionedExam = duplicate ? { ...exam, id: `${exam.id}-${crypto.randomUUID()}` } : exam;
     const base =
       Math.max(
@@ -394,6 +402,7 @@ function Index() {
               exam.durationMinutes,
               exam.passingPercentage,
               exam.title,
+              false,
             )
           }
           onDelete={deleteImportedExam}
@@ -1020,18 +1029,14 @@ function ExamBank({
         aria-label="Tìm bộ đề"
       />
       <div className="bank-list">
-        {official.map((source, index) => (
+        {official.map((source) => (
           <article className="bank-card" key={source.id}>
             <div>
               <p className="eyebrow">OFFICIAL · CTFL {source.syllabus}</p>
               <h2>Sample Exam Set {source.id.slice(-1).toUpperCase()}</h2>
               <p>40 câu · 60 phút · Đạt từ 26/40 · v{source.version}</p>
             </div>
-            <Button
-              onClick={() =>
-                onStartOfficial(index === 0 ? undefined : source.id.slice(-1).toUpperCase())
-              }
-            >
+            <Button onClick={() => onStartOfficial(source.id.slice(-1).toUpperCase())}>
               Bắt đầu thi <ArrowRight />
             </Button>
           </article>

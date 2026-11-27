@@ -600,9 +600,12 @@
 .import-status {
   display: flex;
   gap: 6px;
+  margin: 16px 0 0;
+  padding: 0 2px;
   color: var(--success);
 }
 .import-error {
+  margin: 12px 0 0;
   border-left: 3px solid var(--destructive);
   padding: 10px 12px;
   color: var(--destructive);
@@ -611,7 +614,13 @@
 .import-preview {
   margin-top: 28px;
   border-top: 1px solid var(--border);
-  padding-top: 24px;
+  padding: 24px 0 20px;
+}
+.import-preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
 }
 .import-field {
   display: grid;
@@ -619,6 +628,15 @@
   margin: 18px 0;
   font-size: 12px;
   font-weight: 700;
+}
+.answer-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.answer-file-row button {
+  align-self: stretch;
+  height: auto;
 }
 .import-ai-toggle {
   display: none;
@@ -1563,7 +1581,15 @@
   }
   .import-preview {
     margin-top: 20px;
-    padding-top: 18px;
+    padding: 18px 0 14px;
+  }
+  .import-preview .section-heading {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .import-preview-actions {
+    align-items: flex-end;
+    flex-direction: column;
   }
   .preview-questions,
   .readiness-panel,
